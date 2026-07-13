@@ -1,0 +1,4 @@
+{"cat": "qa", "turns": [{"role": "user", "content": "Apa ibukota Provinsi Jawa Tengah?"}, {"role": "assistant", "content": "Semarang."}]}
+{"cat": "multi_qa", "turns": [{"role": "user", "content": "Sungai terpanjang di Indonesia apa?"}, {"role": "assistant", "content": "Sungai Kapuas di Kalimantan Barat."}, {"role": "user", "content": "Berapa kira-kira panjangnya?"}, {"role": "assistant", "content": "Sekitar 1.143 kilometer."}]}
+{"cat": "reason", "turns": [{"role": "user", "content": "Jika hari ini Senin, tiga hari lagi hari apa?"}, {"role": "assistant", "content": "Langkah: Senin + 3 hari. Urut: Selasa, Rabu, Kamis. Jadi Kamis."}]}
+{"cat": "task", "turns": [{"role": "user", "content": "Sebutkan 3 pulau besar di Indonesia."}, {"role": "assistant", "content": "1. Sumatera 2. Kalimantan 3. Papua"}]}

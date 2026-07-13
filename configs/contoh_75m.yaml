@@ -1,0 +1,35 @@
+# Contoh konfigurasi ~75M — pretrain + SFT satu loop (muat di GPU konsumen ~8GB).
+#
+# Per step: ratio r ramp ratio0->ratio1, pilih SFT vs pretrain batch.
+#   - pretrain batch: seq=1024 (sampling acak shards), loss = model.loss(x) SHIFTED
+#   - SFT batch: max_len=2048 (build_example), loss = sft_loss SHIFTED + IGNORE mask
+#
+# Microbatch terpisah per tipe batch (SFT lebih kecil karena sekuens 2x lebih panjang).
+
+run_name: veyra-native
+
+model:
+  d_model: 768
+  n_layers: 12
+  n_heads: 12
+  n_kv_heads: 4
+  mlp_ratio: 4.0
+  rope_theta: 10000.0
+  grad_checkpoint: true
+
+train:
+  pretrain_seq_len: 1024     # window pretrain
+  sft_max_len: 2048          # cap panjang SFT
+  # Throughput: sesuaikan microbatch dgn memori GPU Anda;
+  # nilai di bawah = titik awal yang wajar utk ~8GB.
+  microbatch_pretrain: 4     # T=1024 
+  microbatch_sft: 2          # T=2048 
+  grad_accum: 16             
+  ratio0: 0.15               # awal: 15% SFT, 85% pretrain
+  ratio1: 0.35               # akhir: 35% SFT, 65% pretrain
+  lr: 3.0e-4
+  warmup: 300
+  optimizer: adam8bit
+  precision: bf16
+  ckpt_every: 200
+  time_budget_sec: 86400     # budget waktu run (detik)

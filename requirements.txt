@@ -1,0 +1,5 @@
+torch>=2.4  # nn.RMSNorm
+numpy
+pyyaml
+# opsional (hemat memori optimizer):
+# bitsandbytes
