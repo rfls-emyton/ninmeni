@@ -37,8 +37,8 @@ colok — lihat docs/antarmuka-model.md), korpus pelatihan, dan catatan riset in
 menunggu dokumentasi teknis rilis penuh.
 
 ## Kontribusi & lisensi
-Tata kelola kontribusi dan lisensi final sedang disiapkan (lihat `LICENSE.PLACEHOLDER.md`).
-Sebelum itu ditetapkan, repo ini berstatus pratinjau sumber.
+Kode di repo ini dilisensikan di bawah **Apache License 2.0** (lihat `LICENSE`).
+Kontribusi dipersilakan melalui issue / pull request.
 
 ## Kontak
 Emylton Leunufna — pencipta framework NINMENI & paradigma NMU — `emylleons8@gmail.com`
