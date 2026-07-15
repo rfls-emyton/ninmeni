@@ -1,4 +1,4 @@
-"""NMU framework — codec statis (1 char = 1 ID, tanpa UNK) + entropy patcher.
+"""NMU framework — codec statis (1 char = 1 ID, tanpa UNK).
 
 Model yang dibangun di atas framework ini: **Veyra**.
 """

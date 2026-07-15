@@ -79,13 +79,15 @@ def main():
     THINK, ENDTHINK = codec.specials["SENTINEL_6"], codec.specials["SENTINEL_7"]
 
     valid = {f.name for f in fields(VeyraNativeConfig)}
+    # Kunci config arsitektur/istilah asing (legacy) — DITOLAK, harus literal agar tertangkap.
     forbidden = {"patch_size", "d_global", "d_local", "n_global_layers", "n_local_layers",
-                 "window", "max_seq", "max_seq_len", "tie_embeddings", "max_patches"}
+                 "window", "max_seq", "max_seq_len", "tie_embeddings", "max_patches",
+                 "vocab_size"}
     bad = [k for k in mc if k in forbidden]
     if bad:
         print(f"[warn] config field dilarang (legacy): {bad} — DIBUANG.", flush=True)
     mc_clean = {k: v for k, v in mc.items() if k in valid}
-    cfg = VeyraNativeConfig(vocab_size=codec.vocab_size, pad_id=codec.pad_id, **mc_clean)
+    cfg = VeyraNativeConfig(ukuran_ruang=codec.ukuran_ruang, pad_id=codec.pad_id, **mc_clean)
     model = VeyraNativeModel(cfg).to(dev)
     opt, opt_kind = get_optimizer(model, tc["lr"], tc.get("optimizer", "adam8bit"))
     print(f"Veyra-NATIVE UNIFIED {count_params(model)/1e6:.1f}M  opt={opt_kind}  device={dev}  "
@@ -165,7 +167,7 @@ def main():
             pg["lr"] = lr_at(step)
         opt.zero_grad(set_to_none=True)
         micro = 0.0
-        n_ok_micro = 0                                                # Patch perbaikan internal
+        n_ok_micro = 0                                                # Perbaikan internal
         for _ in range(grad_accum):
             if is_sft:
                 xb, yb = make_sft_batch(codec, USER, ASST, THINK, ENDTHINK, sft_data,
@@ -179,8 +181,8 @@ def main():
                     loss = model.loss(xb) / grad_accum
             loss.backward()
             micro += loss.item()
-            n_ok_micro += 1                                           # Patch F8
-        # Patch perbaikan internal — kalau semua micro-step continue (jarang tapi mungkin
+            n_ok_micro += 1                                           # Perbaikan internal F8
+        # Perbaikan internal — kalau semua micro-step continue (jarang tapi mungkin
         # untuk SFT batch=None seluruhnya), skip opt.step() supaya Adam m/v tidak
         # drift dari grad=0 spurious update. Existing finite check tidak catch
         # kasus ini karena micro=0.0 IS finite dan gn=0.0 IS finite.

@@ -9,7 +9,7 @@ bisa langsung dipakai trainer selama memenuhi kontrak berikut.
 ```python
 @dataclass
 class MyConfig:
-    vocab_size: int   # diisi trainer dari registry (codec.vocab_size)
+    ukuran_ruang: int # ukuran ruang karakter — diisi trainer dari registry (codec.ukuran_ruang)
     pad_id: int       # diisi trainer dari registry (codec.pad_id)
     # ... field lain = kunci di blok `model:` pada configs/*.yaml
     grad_checkpoint: bool = False   # dibaca trainer untuk log
@@ -27,21 +27,22 @@ class MyModel(nn.Module):
     self.cfg = cfg
 
     def forward(self, x):        # x: LongTensor [B, T] berisi ID karakter
-        return logits            # FloatTensor [B, T, vocab_size]
+        return logits            # FloatTensor [B, T, ukuran_ruang]
 
     def loss(self, x):           # objective pretraining
         # WAJIB SHIFTED: logits[:, :-1] vs x[:, 1:]
         # Loss tanpa shift = model belajar MENYALIN, bukan memprediksi —
-        # ini kelas bug yang diam dan mahal. Uji: loss awal harus ~ln(vocab).
+        # ini kelas bug yang diam dan mahal. Uji: loss awal harus ~ln(ukuran ruang).
         ...
 ```
 
 ## 3. Aturan native yang tidak boleh dilanggar
 
 - **Input = deretan ID karakter mentah** dari codec (1 karakter = 1 ID).
-  Jangan menambahkan segmentasi/penggabungan apa pun sebelum embedding —
-  kalau Anda ingin kompresi, letakkan DI DALAM model sebagai bagian arsitektur.
-- **Tanpa UNK**: vocab_size datang dari registry; semua ID valid.
+  Jangan menambahkan segmentasi/penggabungan apa pun sebelum pemetaan ID→vektor
+  di dalam model — kalau Anda ingin kompresi, letakkan DI DALAM model sebagai
+  bagian arsitektur.
+- **Tanpa UNK**: ukuran_ruang datang dari registry; semua ID valid.
 - **PAD**: tidak dilatih (ignore_index) dan tidak dilihat attention.
 - **Checkpoint**: trainer menyimpan `model.state_dict()` + config dict —
   pastikan arsitektur Anda dapat direkonstruksi dari config-nya saja.

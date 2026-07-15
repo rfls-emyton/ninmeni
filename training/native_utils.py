@@ -3,6 +3,13 @@
 Berisi: ShardSampler (mmap streaming), get_optimizer (adam8bit + fallback AdamW),
 save_ckpt (atomic, Windows-lock-safe). TIDAK bergantung pada arsitektur tertentu —
 input/output shape-agnostic; hanya bicara tensor, codec, dan path.
+
+Kamus V7.4-FINAL (KYROSIS lead 2026-07-14):
+- Field/variabel `neraca` = Bobot Sampling Per-Entitas (Interpretasi B; kode NRC).
+- Sidecar `shard_XXXXX.nrc.npy` = float32 nilai neraca per-record.
+- Mode sampler `neraca` = wiring Interpretasi B (sampel record ~ neraca, sum
+  neraca per entitas = 1 → ekspektasi sampel per entitas setara).
+- Referensi: Kamus Istilah Native NINMENI V7.4-FINAL (registry istilah resmi framework).
 """
 
 from __future__ import annotations
@@ -67,14 +74,14 @@ class MultiPoolShardSampler:
     """Sampler multi-pool paket-kurikulum Gelombang-2 (GAP-2/3/4) — additive, tidak
     mengubah ShardSampler existing.
 
-    pools: list of {"dir": str, "weight": float, "mode": "length"|"record_w"}
-      - mode "length"  : sampel window ~ panjang shard (perilaku existing;
-                          distribusi natural = otoritas substrat).
-      - mode "record_w": sampel RECORD ~ w (sidecar shard_XXXXX.recs.npy
-                          [start,len] + .recw.npy float32), lalu window di
-                          dalam/berawal dari record. Ini wiring Interpretasi B:
-                          sum(w) per entitas = 1 -> ekspektasi sampel per
-                          entitas setara, tidak ditelan panjang teks.
+    pools: list of {"dir": str, "weight": float, "mode": "length"|"neraca"}
+      - mode "length" : sampel window ~ panjang shard (perilaku existing;
+                         distribusi natural = otoritas substrat).
+      - mode "neraca" : sampel RECORD ~ neraca (sidecar shard_XXXXX.recs.npy
+                         [start,len] + .nrc.npy float32), lalu window di
+                         dalam/berawal dari record. Ini wiring Interpretasi B:
+                         sum(neraca) per entitas = 1 -> ekspektasi sampel per
+                         entitas setara, tidak ditelan panjang teks.
     weight antar-pool = proporsi sampel per batch (dinormalisasi).
     Shape-agnostic: keluaran [n, seq_len] long, kompatibel penuh dengan
     trainer existing (atribut .files + .total_units disediakan).
@@ -93,16 +100,16 @@ class MultiPoolShardSampler:
             arrs = [np.load(f, mmap_mode="r") for f in files]
             entry = {"mode": p.get("mode", "length"), "arrs": arrs,
                      "weight": float(p["weight"]), "dir": p["dir"]}
-            if entry["mode"] == "record_w":
-                recs, recw = [], []
+            if entry["mode"] == "neraca":
+                recs, neracas = [], []
                 for f in files:
                     base = f[: -len(".ids.npy")]
                     recs.append(np.load(base + ".recs.npy"))
-                    recw.append(np.load(base + ".recw.npy").astype(np.float64))
+                    neracas.append(np.load(base + ".nrc.npy").astype(np.float64))
                 entry["recs"] = recs
-                sw = np.array([w.sum() for w in recw], dtype=np.float64)
-                entry["shard_prob"] = sw / sw.sum()
-                entry["rec_prob"] = [w / w.sum() for w in recw]
+                sn = np.array([n.sum() for n in neracas], dtype=np.float64)
+                entry["shard_prob"] = sn / sn.sum()
+                entry["neraca_prob"] = [n / n.sum() for n in neracas]
             else:
                 valid = np.array([max(0, len(a) - seq_len) for a in arrs], dtype=np.float64)
                 if valid.sum() <= 0:
@@ -117,8 +124,8 @@ class MultiPoolShardSampler:
     def _sample_one(self, pool):
         s = self.rng.choice(len(pool["arrs"]), p=pool["shard_prob"])
         a = pool["arrs"][s]
-        if pool["mode"] == "record_w":
-            r = self.rng.choice(len(pool["rec_prob"][s]), p=pool["rec_prob"][s])
+        if pool["mode"] == "neraca":
+            r = self.rng.choice(len(pool["neraca_prob"][s]), p=pool["neraca_prob"][s])
             start, rlen = pool["recs"][s][r]
             # window berawal di dalam record; record pendek -> lanjut ke stream
             # berikutnya (lintasan konteks natural), clamp ke batas shard.
@@ -143,11 +150,11 @@ def save_ckpt(path: Path, model, opt, step, cfg_dict, codec, total_steps, opt_ki
     Windows-lock-safe: retry os.replace s.d. 20× kalau ckpt.pt dikunci pembaca lain;
     kalau tetap gagal, lewati simpan (JANGAN crash training).
 
-    Patch perbaikan internal — setelah os.replace ckpt.pt sukses, tulis sidecar step.txt
+    Perbaikan internal — setelah os.replace ckpt.pt sukses, tulis sidecar step.txt
     atomic (tmp->rename) berisi step angka literal. Daemon baca step.txt O(1)
     tanpa torch.load full blob (1-2 GB) tiap 30 detik -> tutup race window
     baca-tulis ckpt.
-    Patch perbaikan internal — broaden except PermissionError -> except OSError
+    Perbaikan internal — broaden except PermissionError -> except OSError
     (cover WinError 5/32/33 varian yang tidak PermissionError subclass).
     """
     path = Path(path)
@@ -157,9 +164,9 @@ def save_ckpt(path: Path, model, opt, step, cfg_dict, codec, total_steps, opt_ki
         "optimizer": opt.state_dict(),
         "step": step,
         "config": cfg_dict,
-        "config_hash": config_hash(cfg_dict),    # D3: deteksi schema drift saat resume
+        "config_hash": config_hash(cfg_dict),
         "registry_hash": codec.registry_hash,
-        "vocab_version": codec.version,
+        "versi_registry": codec.version,
         "total_steps": total_steps,
         "opt_kind": opt_kind,
         "rng": torch.get_rng_state(),

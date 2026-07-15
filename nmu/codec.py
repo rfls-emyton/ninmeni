@@ -18,7 +18,7 @@ from .errors import InvalidInputError, PolicyViolationError, RegistryMismatchErr
 _ALLOWED_CONTROL = {0x09, 0x0A}  # TAB, LF
 
 # G19b (SPEC-SENTINEL-v1, tinjauan internal 2026-07-07): specials 0..15 adalah
-# kontrak arsitektural beku permanen (BUKAN vocab_size — ruang karakter registry hanya boleh tumbuh append-only ANTAR-GENERASI model; di dalam masa hidup satu model terlatih, ruangnya beku). Assert konstanta ini di setiap NMUCodec
+# kontrak arsitektural beku permanen (BUKAN ukuran_ruang — ruang karakter registry hanya boleh tumbuh append-only ANTAR-GENERASI model; di dalam masa hidup satu model terlatih, ruangnya beku). Assert konstanta ini di setiap NMUCodec
 # construction — fail-fast kalau registry mencoba mengubah sentinel IDs.
 _SPECIALS_FROZEN = {
     "PAD": 0, "BOS": 1, "EOS": 2, "MASK": 3,
@@ -63,7 +63,7 @@ class NMUCodec:
             self._id_to_char[cid] = chr(cp)
             self._char_to_id[cp] = cid
 
-        self.vocab_size = size
+        self.ukuran_ruang = size  # ukuran ruang karakter registry (jumlah ID)
         self.pad_id = specials["PAD"]
         self.bos_id = specials["BOS"]
         self.eos_id = specials["EOS"]
@@ -124,7 +124,7 @@ class NMUCodec:
         return out
 
     def decode(self, ids: list[int]) -> str:
-        n = self.vocab_size
+        n = self.ukuran_ruang
         parts = []
         for i in ids:
             if i < 0 or i >= n:

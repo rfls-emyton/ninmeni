@@ -1,4 +1,4 @@
-"""sft_native.py — SFT (Supervised Fine-Tuning) di atas arsitektur Veyra-NATIVE.
+"""sft_native.py — SFT (pelatihan terarah pembentuk protokol dialog) di atas arsitektur Veyra-NATIVE.
 
 KONTRAK:
   1. Loss WAJIB causal-LM SHIFTED — sama seperti pretrain native. Tanpa shift,
@@ -14,9 +14,9 @@ KONTRAK:
        Assistant content + EOS → TRAINED
   4. Gate by-entropi (NMUCell) berjalan APA ADANYA. Tidak ada intervensi khusus
      pada surprisal di sentinel positions. Konsisten prinsip 3.
-  5. Tidak ada patch, tidak ada window, tidak ada max_seq hard boundary.
-     max_len SFT adalah cap PADDING (contoh > max_len dibuang), BUKAN constraint
-     kelipatan apa pun.
+  5. Tidak ada segmentasi perantara, tidak ada jendela geser, tidak ada batas
+     keras panjang sekuens. max_len SFT adalah cap PADDING (contoh > max_len
+     dibuang), BUKAN constraint kelipatan apa pun.
 """
 
 from __future__ import annotations
@@ -230,7 +230,7 @@ def sft_loss(model, input_ids, labels):
     """
     logits = model(input_ids)                                      # [B,T,V]
     return F.cross_entropy(
-        logits[:, :-1, :].reshape(-1, model.cfg.vocab_size),
+        logits[:, :-1, :].reshape(-1, model.cfg.ukuran_ruang),
         labels[:, 1:].reshape(-1),
         ignore_index=IGNORE,
     )
@@ -270,8 +270,10 @@ def main():
         raise SystemExit("[FAIL] REGISTRY_MISMATCH base-ckpt vs registry.")
     base_cfg = base_blob["config"]
     valid_fields = {f.name for f in fields(VeyraNativeConfig)}
+    # Kunci config arsitektur/istilah asing (legacy) — DITOLAK, harus literal agar tertangkap.
     forbidden = {"patch_size", "d_global", "d_local", "n_global_layers", "n_local_layers",
-                 "window", "max_seq", "max_seq_len", "tie_embeddings", "max_patches"}
+                 "window", "max_seq", "max_seq_len", "tie_embeddings", "max_patches",
+                 "vocab_size"}
     bad = [k for k in base_cfg if k in forbidden]
     if bad:
         raise SystemExit(f"[FAIL] base-ckpt mengandung field scaffold: {bad}. "

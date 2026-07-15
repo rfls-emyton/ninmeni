@@ -186,7 +186,7 @@ def run(inputs, out_dir, fields, max_chars, shard_units, decon_hashes):
 
     datacard = {
         "version": codec.version, "registry_hash": codec.registry_hash,
-        "unicode_version": codec.unicode_version, "vocab_size": codec.vocab_size,
+        "unicode_version": codec.unicode_version, "ukuran_ruang": codec.ukuran_ruang,
         "granularity": "per-record (kalimat)", "split_rule": "hash%50: 0=val,1=test,else train (frozen)",
         "stats": stats, "per_source": per_source,
         "splits": {s: {"docs": w.docs, "units": w.units, "shards": w.idx} for s, w in writers.items()},
@@ -202,15 +202,9 @@ def run(inputs, out_dir, fields, max_chars, shard_units, decon_hashes):
 
 
 def main():
-    DATA = r"R:\LLM\DATA"
-    default_inputs = [
-        os.path.join(DATA, "corpus_clean", "asana_realization_corpus_v2.jsonl"),
-        os.path.join(DATA, "corpus_clean", "asana_role_speech_pairs.jsonl"),
-        os.path.join(DATA, "corpus_clean", "asana_clean_corpus.jsonl"),
-        os.path.join(DATA, "curriculum_wikipedia_full"),
-    ]
     ap = argparse.ArgumentParser()
-    ap.add_argument("--inputs", nargs="+", default=default_inputs)
+    ap.add_argument("--inputs", nargs="+", required=True,
+                    help="file/dir JSONL korpus Anda (lihat examples/curriculum/)")
     ap.add_argument("--out", default="data/shards_id_v2")
     ap.add_argument("--fields", nargs="+", default=FIELD_PRIORITY)
     ap.add_argument("--max-chars", type=int, default=40_000_000)

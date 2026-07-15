@@ -7,9 +7,9 @@ arsitektur Anda sendiri.
 
 Kontrak antarmuka yang dituntut trainer (lihat docs/antarmuka-model.md):
   - Config  : dataclass; field mencakup kunci `model:` di configs/*.yaml
-              + vocab_size + pad_id (diisi trainer dari registry).
+              + ukuran_ruang + pad_id (diisi trainer dari registry).
   - Model   : __init__(cfg); menyimpan `self.cfg`;
-              forward(x[B,T] long) -> logits [B, T, vocab_size];
+              forward(x[B,T] long) -> logits [B, T, ukuran_ruang];
               loss(x[B,T]) -> scalar CE SHIFTED (predict karakter berikutnya).
   - count_params(model) -> int.
 
@@ -33,7 +33,7 @@ from torch.utils.checkpoint import checkpoint
 
 @dataclass
 class ReferenceConfig:
-    vocab_size: int = 4450
+    ukuran_ruang: int = 4450     # ukuran ruang karakter registry (jumlah ID)
     pad_id: int = 0
     d_model: int = 768
     n_layers: int = 12
@@ -45,7 +45,7 @@ class ReferenceConfig:
 
 
 def _rope(q, k, theta):
-    # Rotary position embedding sederhana (separuh-dimensi berpasangan).
+    # Penyandian posisi rotari (RoPE) sederhana (separuh-dimensi berpasangan).
     B, H, T, D = q.shape
     half = D // 2
     freqs = theta ** (-torch.arange(0, half, device=q.device, dtype=torch.float32) / half)
@@ -97,13 +97,13 @@ class ReferenceNativeModel(nn.Module):
     def __init__(self, cfg: ReferenceConfig):
         super().__init__()
         self.cfg = cfg
-        self.emb = nn.Embedding(cfg.vocab_size, cfg.d_model, padding_idx=cfg.pad_id)
+        self.emb = nn.Embedding(cfg.ukuran_ruang, cfg.d_model, padding_idx=cfg.pad_id)
         self.blocks = nn.ModuleList(_Block(cfg) for _ in range(cfg.n_layers))
         self.norm_f = nn.RMSNorm(cfg.d_model)
-        self.head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+        self.head = nn.Linear(cfg.d_model, cfg.ukuran_ruang, bias=False)
         self.head.weight = self.emb.weight  # tied
         # Init kecil (std 0.02) — tanpa ini logits awal membesar dan CE awal
-        # jauh di atas ln(vocab). Uji waras: loss step-0 harus ~ ln(vocab_size).
+        # jauh di atas ln(ukuran ruang). Uji waras: loss step-0 harus ~ ln(ukuran_ruang).
         self.apply(self._init)
 
     @staticmethod
@@ -127,7 +127,7 @@ class ReferenceNativeModel(nn.Module):
         """CE SHIFTED — objective pretraining native (predict karakter berikutnya)."""
         logits = self.forward(x)
         return F.cross_entropy(
-            logits[:, :-1, :].reshape(-1, self.cfg.vocab_size),
+            logits[:, :-1, :].reshape(-1, self.cfg.ukuran_ruang),
             x[:, 1:].reshape(-1),
             ignore_index=self.cfg.pad_id,
         )
