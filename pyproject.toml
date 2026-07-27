@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ninmeni"
-version = "0.1.3"
+version = "0.1.4"
 description = "NINMENI - framework model bahasa native Indonesia. Paradigma NMU: 1 karakter = 1 ID, ruang karakter statis universal, tanpa UNK."
 readme = "README.md"
 license = { text = "Apache-2.0" }

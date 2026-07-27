@@ -5,7 +5,7 @@ native terhadap bahasa Indonesia, dari lapisan paling dasar.
 
 Hierarki: **framework NINMENI → paradigma NMU → model (contoh: Veyra)**.
 
-- **NMU (Native Meaning Unit)** — paradigma representasi: satu karakter = satu
+- **NMU (ninmeni meaning unit)** — paradigma representasi: satu karakter = satu
   identitas tetap, di ruang karakter statis universal. Tanpa segmentasi sub-kata,
   tanpa UNK. Bahasa Indonesia hidup dari imbuhan; dengan membaca per karakter, akar
   kata selalu tampak utuh di setiap turunannya — model menemukan pola imbuhan sendiri.
