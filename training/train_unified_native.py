@@ -1,17 +1,17 @@
-"""train_unified_native.py — UNIFIED pretrain + SFT dalam 1 loop, Veyra-NATIVE.
+"""train_unified_native.py — UNIFIED pretrain + SFT dalam 1 loop, di atas paradigma NMU.
 
 1 loop: tiap step pilih batch berdasarkan probability r:
   - r dari ramp ratio0 -> ratio1 sepanjang training (awal mostly pretrain, akhir bertahap)
   - pretrain batch (seq=cfg.pretrain_seq_len): loss = model.loss(x)            (SHIFTED CE)
   - SFT batch (max_len=cfg.sft_max_len)     : loss = sft_loss(model, xb, yb)  (SHIFTED CE + IGNORE_INDEX mask)
 
-Semua gate native dipatuhi:
-  - G6: loss kedua jalur shifted (model.loss & sft_loss identik formula via G10).
-  - G8/G9: SFT mask label selaras shift; sentinel handling konsisten.
-  - G11: tak ada pattern scaffold di path unified.
-  - G12: PAD attention mask auto-aktif kalau SFT batch punya PAD.
+Invarian yang dipatuhi:
+  - Loss kedua jalur SHIFTED (model.loss & sft_loss identik formula).
+  - SFT mask label selaras shift; sentinel handling konsisten.
+  - Tak ada pattern scaffold di path unified.
+  - PAD attention mask auto-aktif kalau SFT batch punya PAD.
 
-Resumable + time-guard + config_hash + opt_kind check (defensive D1-D4 aktif).
+Resumable + time-guard + config_hash + opt_kind check (cek defensif aktif).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from nmu import NMUCodec                                                          # noqa: E402
-from model.reference_model import VeyraNativeModel, VeyraNativeConfig, count_params  # ganti dgn arsitektur Anda — docs/antarmuka-model.md  # noqa: E402
+from model.reference_model import NativeModel, NativeConfig, count_params  # ganti dgn arsitektur Anda — docs/antarmuka-model.md  # noqa: E402
 from training.native_utils import ShardSampler, MultiPoolShardSampler, get_optimizer, save_ckpt, config_hash  # noqa: E402
 from training.sft_native import build_example, sft_loss, IGNORE                   # noqa: E402
 
@@ -59,11 +59,11 @@ def main():
     ap.add_argument("--shards", required=True, help="dir shard pretrain (*.ids.npy)")
     ap.add_argument("--sft", required=True, help="path SFT jsonl (format turns)")
     ap.add_argument("--registry", default="registry/nmu_v1.json")
-    ap.add_argument("--out", default="checkpoints/nmu-veyra-native-unified")
+    ap.add_argument("--out", default="checkpoints/nmu-native-unified")
     ap.add_argument("--total-steps", type=int, default=200000)
     ap.add_argument("--time-budget", type=int, default=None)
     ap.add_argument("--pretrain-mix", default=None,
-                    help="paket-kurikulum W2: path json pools multi-arm "
+                    help="multi-pool kurikulum: path json pools "
                          "[{dir,weight,mode}]; bila diisi, --shards diabaikan "
                          "KECUALI muncul sebagai pool di json ini")
     a = ap.parse_args()
@@ -78,19 +78,16 @@ def main():
     USER, ASST = codec.specials["SENTINEL_4"], codec.specials["SENTINEL_5"]
     THINK, ENDTHINK = codec.specials["SENTINEL_6"], codec.specials["SENTINEL_7"]
 
-    valid = {f.name for f in fields(VeyraNativeConfig)}
-    # Kunci config arsitektur/istilah asing (legacy) — DITOLAK, harus literal agar tertangkap.
-    forbidden = {"patch_size", "d_global", "d_local", "n_global_layers", "n_local_layers",
-                 "window", "max_seq", "max_seq_len", "tie_embeddings", "max_patches",
-                 "vocab_size"}
-    bad = [k for k in mc if k in forbidden]
+    valid = {f.name for f in fields(NativeConfig)}
+    # Kontrak config TERTUTUP: hanya field milik NativeConfig yang diterima.
+    bad = [k for k in mc if k not in valid]
     if bad:
-        print(f"[warn] config field dilarang (legacy): {bad} — DIBUANG.", flush=True)
+        raise SystemExit(f"[FAIL] config field di luar kontrak arsitektur: {bad}.")
     mc_clean = {k: v for k, v in mc.items() if k in valid}
-    cfg = VeyraNativeConfig(ukuran_ruang=codec.ukuran_ruang, pad_id=codec.pad_id, **mc_clean)
-    model = VeyraNativeModel(cfg).to(dev)
+    cfg = NativeConfig(ukuran_ruang=codec.ukuran_ruang, pad_id=codec.pad_id, **mc_clean)
+    model = NativeModel(cfg).to(dev)
     opt, opt_kind = get_optimizer(model, tc["lr"], tc.get("optimizer", "adam8bit"))
-    print(f"Veyra-NATIVE UNIFIED {count_params(model)/1e6:.1f}M  opt={opt_kind}  device={dev}  "
+    print(f"NMU-native UNIFIED {count_params(model)/1e6:.1f}M  opt={opt_kind}  device={dev}  "
           f"grad_checkpoint={cfg.grad_checkpoint}", flush=True)
 
     out = Path(a.out)
@@ -129,7 +126,7 @@ def main():
     if a.pretrain_mix:
         pools = json.loads(Path(a.pretrain_mix).read_text(encoding="utf-8"))["pools"]
         sampler = MultiPoolShardSampler(pools, pretrain_seq, seed=start_step)
-        print(f"[wave2] multi-pool aktif: "
+        print(f"[multi-pool] aktif: "
               + ", ".join(f"{Path(p['dir']).name}={p['weight']}" for p in pools), flush=True)
     else:
         sampler = ShardSampler(a.shards, pretrain_seq, seed=start_step)
@@ -167,7 +164,7 @@ def main():
             pg["lr"] = lr_at(step)
         opt.zero_grad(set_to_none=True)
         micro = 0.0
-        n_ok_micro = 0                                                # Perbaikan internal
+        n_ok_micro = 0                          # hitung micro-step yang benar-benar backward
         for _ in range(grad_accum):
             if is_sft:
                 xb, yb = make_sft_batch(codec, USER, ASST, THINK, ENDTHINK, sft_data,
@@ -181,11 +178,11 @@ def main():
                     loss = model.loss(xb) / grad_accum
             loss.backward()
             micro += loss.item()
-            n_ok_micro += 1                                           # Perbaikan internal F8
-        # Perbaikan internal — kalau semua micro-step continue (jarang tapi mungkin
-        # untuk SFT batch=None seluruhnya), skip opt.step() supaya Adam m/v tidak
-        # drift dari grad=0 spurious update. Existing finite check tidak catch
-        # kasus ini karena micro=0.0 IS finite dan gn=0.0 IS finite.
+            n_ok_micro += 1
+        # Kalau semua micro-step continue (jarang tapi mungkin untuk SFT
+        # batch=None seluruhnya), skip opt.step() supaya state optimizer tidak
+        # drift dari update spurious grad=0. Cek finite saja tidak menangkap
+        # kasus ini karena micro=0.0 dan gn=0.0 sama-sama finite.
         if n_ok_micro == 0:
             continue
         gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -193,14 +190,8 @@ def main():
             opt.zero_grad(set_to_none=True)
             continue
         opt.step()
-        # REVERT perbaikan internal zeroing (SPEC-F6-NATIVE-v1, sesi review 2026-07-07):
-        # Zeroing melawan state terpelajar (63K step supresi logit PAD; PAD row
-        # norm 2.256 = fungsional-benign, bukan drift bug). Ganti dengan eksklusi
-        # PAD dari ruang prediksi via mask -inf di forward() head + _surprisal_from()
-        # (lihat model/reference_model.py) — memformalkan state terpelajar jadi
-        # invarian arsitektural permanen + hentikan drift secara struktural
-        # (gradien denominator ke PAD row berhenti total by construction).
-        # Kontinuitas terverifikasi CPU pra-deploy: |delta loss shifted| = 5.96e-08 nats.
+        # Tidak ada zeroing manual bobot PAD di loop ini: eksklusi PAD dari
+        # ruang prediksi adalah tanggung jawab arsitektur, bukan loop pelatihan.
         if is_sft: nS += 1
         else: nP += 1
         if step % 25 == 0:

@@ -140,5 +140,5 @@ def count_params(model) -> int:
 # Alias kompatibilitas — trainer mengimpor nama-nama ini. Saat Anda menulis
 # arsitektur sendiri, ekspor nama yang sama dari modul Anda dan arahkan import
 # di training/train_unified_native.py ke sana.
-VeyraNativeConfig = ReferenceConfig
-VeyraNativeModel = ReferenceNativeModel
+NativeConfig = ReferenceConfig
+NativeModel = ReferenceNativeModel

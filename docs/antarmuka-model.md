@@ -44,17 +44,32 @@ class MyModel(nn.Module):
   bagian arsitektur.
 - **Tanpa UNK**: ukuran_ruang datang dari registry; semua ID valid.
 - **PAD**: tidak dilatih (ignore_index) dan tidak dilihat attention.
-- **Checkpoint**: trainer menyimpan `model.state_dict()` + config dict —
-  pastikan arsitektur Anda dapat direkonstruksi dari config-nya saja.
+- **Checkpoint**: trainer menyimpan `model.state_dict()` + config dict + hash
+  (atomic: tulis tmp → rename) — pastikan arsitektur Anda dapat direkonstruksi
+  dari config-nya saja. Saat resume, trainer memverifikasi tiga hal dan GAGAL
+  KERAS bila tak cocok (bukan peringatan): `registry_hash` (pin registry
+  karakter ↔ bobot — bobot dilatih pada satu ruang karakter, memuatnya dengan
+  registry lain = korupsi senyap), kesetaraan config penuh + `config_hash`
+  (deteksi ckpt basi setelah skema berevolusi), dan `opt_kind` (state optimizer
+  tidak portabel antar jenis optimizer).
+- **Protokol tool (SFT)**: placeholder `<S8>`/`<S9>` (panggilan) dan
+  `<S10>`/`<S11>` (hasil) di content assistant disubstitusi loader menjadi ID
+  sentinel tunggal — hanya di content assistant, tidak pernah di content user
+  (anti-spoofing: user tak boleh bisa "menghasilkan sentinel" lewat teks).
+  Kanal hasil-alat (`<S10>..<S11>`, termasuk isinya) TIDAK dilatih-prediksi
+  (label IGNORE): hasil tool adalah suara sistem yang disuntik pipeline, bukan
+  emisi model. Model belajar MENYALIN dari hasil yang hadir di konteks, bukan
+  menghafal isinya — melatih kanal itu berarti mengajari model mengarang hasil
+  beserta sumbernya.
 
 ## 4. Menghubungkan ke trainer
 
 Satu baris di `training/train_unified_native.py`:
 
 ```python
-from model.reference_model import VeyraNativeModel, VeyraNativeConfig, count_params
+from model.reference_model import NativeModel, NativeConfig, count_params
 # ganti menjadi:
-from model.arsitektur_anda import VeyraNativeModel, VeyraNativeConfig, count_params
+from model.arsitektur_anda import NativeModel, NativeConfig, count_params
 ```
 
 (Ekspor alias dengan nama yang sama, atau ubah ketiga nama di trainer.)

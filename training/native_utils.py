@@ -1,15 +1,14 @@
-"""native_utils.py — utility netral untuk training Veyra-native.
+"""native_utils.py — utility netral untuk training di atas paradigma NMU.
 
 Berisi: ShardSampler (mmap streaming), get_optimizer (adam8bit + fallback AdamW),
 save_ckpt (atomic, Windows-lock-safe). TIDAK bergantung pada arsitektur tertentu —
 input/output shape-agnostic; hanya bicara tensor, codec, dan path.
 
-Kamus V7.4-FINAL (KYROSIS lead 2026-07-14):
-- Field/variabel `neraca` = Bobot Sampling Per-Entitas (Interpretasi B; kode NRC).
-- Sidecar `shard_XXXXX.nrc.npy` = float32 nilai neraca per-record.
-- Mode sampler `neraca` = wiring Interpretasi B (sampel record ~ neraca, sum
-  neraca per entitas = 1 → ekspektasi sampel per entitas setara).
-- Referensi: Kamus Istilah Native NINMENI V7.4-FINAL (registry istilah resmi framework).
+Istilah:
+- Field/variabel `neraca` = bobot sampling per-domain.
+- Sidecar `shard_XXXXX.neraca.npy` = float32 nilai neraca per-record.
+- Mode sampler `neraca` = sampel record ~ neraca; sum neraca per domain = 1
+  → ekspektasi sampel per domain setara, tidak ditelan panjang teks.
 """
 
 from __future__ import annotations
@@ -71,17 +70,17 @@ class ShardSampler:
 
 
 class MultiPoolShardSampler:
-    """Sampler multi-pool paket-kurikulum Gelombang-2 (GAP-2/3/4) — additive, tidak
+    """Sampler multi-pool untuk kurikulum bertingkat — additive, tidak
     mengubah ShardSampler existing.
 
     pools: list of {"dir": str, "weight": float, "mode": "length"|"neraca"}
       - mode "length" : sampel window ~ panjang shard (perilaku existing;
                          distribusi natural = otoritas substrat).
       - mode "neraca" : sampel RECORD ~ neraca (sidecar shard_XXXXX.recs.npy
-                         [start,len] + .nrc.npy float32), lalu window di
-                         dalam/berawal dari record. Ini wiring Interpretasi B:
-                         sum(neraca) per entitas = 1 -> ekspektasi sampel per
-                         entitas setara, tidak ditelan panjang teks.
+                         [start,len] + .neraca.npy float32), lalu window di
+                         dalam/berawal dari record: sum(neraca) per domain
+                         = 1 -> ekspektasi sampel per domain setara, tidak
+                         ditelan panjang teks.
     weight antar-pool = proporsi sampel per batch (dinormalisasi).
     Shape-agnostic: keluaran [n, seq_len] long, kompatibel penuh dengan
     trainer existing (atribut .files + .total_units disediakan).
@@ -105,7 +104,7 @@ class MultiPoolShardSampler:
                 for f in files:
                     base = f[: -len(".ids.npy")]
                     recs.append(np.load(base + ".recs.npy"))
-                    neracas.append(np.load(base + ".nrc.npy").astype(np.float64))
+                    neracas.append(np.load(base + ".neraca.npy").astype(np.float64))
                 entry["recs"] = recs
                 sn = np.array([n.sum() for n in neracas], dtype=np.float64)
                 entry["shard_prob"] = sn / sn.sum()
@@ -150,12 +149,11 @@ def save_ckpt(path: Path, model, opt, step, cfg_dict, codec, total_steps, opt_ki
     Windows-lock-safe: retry os.replace s.d. 20× kalau ckpt.pt dikunci pembaca lain;
     kalau tetap gagal, lewati simpan (JANGAN crash training).
 
-    Perbaikan internal — setelah os.replace ckpt.pt sukses, tulis sidecar step.txt
-    atomic (tmp->rename) berisi step angka literal. Daemon baca step.txt O(1)
-    tanpa torch.load full blob (1-2 GB) tiap 30 detik -> tutup race window
-    baca-tulis ckpt.
-    Perbaikan internal — broaden except PermissionError -> except OSError
-    (cover WinError 5/32/33 varian yang tidak PermissionError subclass).
+    Setelah os.replace ckpt.pt sukses, tulis sidecar step.txt atomic
+    (tmp->rename) berisi step angka literal — pembaca eksternal bisa cek step
+    O(1) tanpa torch.load blob penuh, menutup race window baca-tulis ckpt.
+    Except OSError (bukan hanya PermissionError) agar varian WinError 5/32/33
+    yang bukan subclass PermissionError ikut tertangani.
     """
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)

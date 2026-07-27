@@ -17,7 +17,7 @@ from .errors import InvalidInputError, PolicyViolationError, RegistryMismatchErr
 # di normalize(), jadi tidak perlu ID sendiri.
 _ALLOWED_CONTROL = {0x09, 0x0A}  # TAB, LF
 
-# G19b (SPEC-SENTINEL-v1, tinjauan internal 2026-07-07): specials 0..15 adalah
+# Kontrak sentinel: specials 0..15 adalah
 # kontrak arsitektural beku permanen (BUKAN ukuran_ruang — ruang karakter registry hanya boleh tumbuh append-only ANTAR-GENERASI model; di dalam masa hidup satu model terlatih, ruangnya beku). Assert konstanta ini di setiap NMUCodec
 # construction — fail-fast kalau registry mencoba mengubah sentinel IDs.
 _SPECIALS_FROZEN = {
@@ -31,18 +31,18 @@ _SPECIALS_FROZEN = {
 class NMUCodec:
     def __init__(self, specials: dict[str, int], codepoints: list[int],
                  version: str, unicode_version: str, registry_hash: str):
-        # G19b: specials 0..15 frozen constant. Assert di construction supaya
+        # Specials 0..15 frozen constant. Assert di construction supaya
         # SETIAP codec (via load() atau direct construct) lulus gate arsitektural.
         for name, expected_id in _SPECIALS_FROZEN.items():
             if name not in specials:
                 raise RegistryMismatchError(
-                    f"[G19b] specials pelanggaran: {name} hilang dari registry. "
+                    f"[SENTINEL] pelanggaran kontrak: {name} hilang dari registry. "
                     f"Specials 0..15 = kontrak arsitektural beku permanen; semua "
                     f"16 nama WAJIB ada dengan ID sesuai konstanta."
                 )
             if specials[name] != expected_id:
                 raise RegistryMismatchError(
-                    f"[G19b] specials pelanggaran: {name} expected id={expected_id}, "
+                    f"[SENTINEL] pelanggaran kontrak: {name} expected id={expected_id}, "
                     f"actual={specials[name]}. Specials 0..15 = frozen constant."
                 )
 

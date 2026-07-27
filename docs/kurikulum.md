@@ -17,7 +17,32 @@ Dua jalur data, dua peran yang berbeda dan tidak boleh dicampur:
 - Peran: mengajarkan BENTUK berinteraksi (format jawaban, protokol tool, gaya) — bukan
   menjejalkan fakta. Fakta yang hanya ada di SFT cenderung rapuh.
 - Penalaran bertahap diajarkan sebagai LINTASAN: enumerasi langkah searah penulisan,
-  jawaban = kelanjutan alami dari langkahnya (lihat contoh `reason`).
+  jawaban = kelanjutan alami dari langkahnya (lihat contoh `reason`). Penalaran juga
+  bisa diberi kanal eksplisit lewat field `think` pada turn assistant (lihat contoh
+  `reason_think`) — isinya dilatih di antara sentinel THINK/ENDTHINK.
+- Protokol tool ditulis sebagai placeholder di content assistant:
+  `<S8>{"tool": "...", "q": "..."}<S9>` untuk panggilan, lalu `<S10>{hasil}<S11>`
+  untuk hasil (lihat contoh `tool`). Loader mensubstitusinya menjadi ID sentinel
+  tunggal; span hasil (`<S10>..<S11>`) tidak dilatih-prediksi — model belajar
+  memanggil dan menyandarkan jawaban pada hasil, bukan menghafal isi hasil.
+  Rincian di `docs/antarmuka-model.md`.
+
+## 3. Asas Prosedur-Terhitung (anti-hafalan)
+
+Segala yang diajarkan lewat SFT harus menghasilkan GENERALISASI, bukan hafalan.
+Cara mencapainya bukan slogan, melainkan disiplin builder:
+
+- **Jawaban = fungsi dari input.** Setiap sample dihasilkan builder/oracle yang
+  MENGHITUNG jawaban dari isi pertanyaan (aritmetika dieksekusi, hitungan
+  diverifikasi kode), bukan daftar pasangan tanya-jawab yang ditulis tangan.
+- **Guru tanpa kebiasaan.** Variasikan bentuk instruksi, urutan, distraktor,
+  posisi jawaban, panjang, dan gaya — supaya model belajar PROSEDUR-nya, bukan
+  templat permukaannya.
+- **Kelulusan hanya di varian held-out.** Sisihkan varian/kombinasi yang 0×
+  muncul di data latih; ukur transfer di sana. Skor tinggi pada bentuk yang
+  pernah dilihat tidak membuktikan apa-apa — pantau selisih seen/unseen.
+- **Jangan menjejalkan fakta lewat volume.** Mengulang-ulang jawaban yang sama
+  memperbesar hafalan, bukan pemahaman; fakta dunia tetap milik jalur pretraining.
 
 ## Prinsip lintas-jalur
 - 1 karakter = 1 ID: registry karakter statis (`registry/nmu_v1.json`) berlaku untuk

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ninmeni"
+version = "0.1.3"
+description = "NINMENI - framework model bahasa native Indonesia. Paradigma NMU: 1 karakter = 1 ID, ruang karakter statis universal, tanpa UNK."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Emylton Leunufna", email = "emylleons8@gmail.com" }]
+requires-python = ">=3.9"
+dependencies = ["numpy"]
+keywords = ["nlp", "bahasa-indonesia", "character-level", "language-model", "tokenizer-free"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: Indonesian",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Development Status :: 3 - Alpha",
+]
+
+[project.optional-dependencies]
+train = ["torch>=2.4", "pyyaml"]
+
+[project.urls]
+Homepage = "https://ninmeni.net"
+
+[tool.setuptools]
+packages = ["nmu"]
+
+[tool.setuptools.package-data]
+nmu = ["nmu_v1.json"]

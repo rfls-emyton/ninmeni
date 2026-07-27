@@ -6,7 +6,7 @@
 #
 # Microbatch terpisah per tipe batch (SFT lebih kecil karena sekuens 2x lebih panjang).
 
-run_name: veyra-native
+run_name: native-example
 
 model:
   d_model: 768

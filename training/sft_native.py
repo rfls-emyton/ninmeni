@@ -1,8 +1,8 @@
-"""sft_native.py — SFT (pelatihan terarah pembentuk protokol dialog) di atas arsitektur Veyra-NATIVE.
+"""sft_native.py — SFT (pelatihan terarah pembentuk protokol dialog) di atas model referensi paradigma NMU.
 
 KONTRAK:
   1. Loss WAJIB causal-LM SHIFTED — sama seperti pretrain native. Tanpa shift,
-     head bisa identity-cheat (B1 audit-2 yg muncul lagi di SFT scaffold).
+     head bisa identity-cheat (kegagalan klasik yang mudah muncul pada scaffold SFT).
   2. Masking labels selaras dgn target shifted — labels dibangun positional
      paralel dgn input, lalu di-shift bersama input di loss. IGNORE di posisi i
      berarti TARGET di posisi i (= input[i]) tidak dilatih. Karena shift, logits[t-1]
@@ -36,25 +36,24 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from nmu import NMUCodec                                          # noqa: E402
-from model.reference_model import VeyraNativeModel, VeyraNativeConfig, count_params  # noqa: E402 — ganti dgn arsitektur Anda
+from model.reference_model import NativeModel, NativeConfig, count_params  # noqa: E402 — ganti dgn arsitektur Anda
 from training.native_utils import get_optimizer, save_ckpt, config_hash  # noqa: E402
 
 IGNORE = -100                                                      # standard PyTorch CE ignore_index
-_VALID_ROLES = {"user", "assistant"}                               # D2: hanya 2 role yg diizinkan
+_VALID_ROLES = {"user", "assistant"}                               # hanya 2 role yang diizinkan
 
 # ============================================================
-# SPEC-subst-sentinel-NATIVE-v1 (tinjauan internal 2026-07-08) — tool placeholder → sentinel single-ID
+# Substitusi placeholder tool → sentinel single-ID
 # ============================================================
-# Design doc design/v6_tool_code_protocol.md §2.3.3 L189-191 menjanjikan substitusi
-# placeholder tekstual → sentinel single-ID di dataset akhir. subst-sentinel audit menemukan
-# substitusi TIDAK diimplementasi — tool corpus 3,886 sample (24% v6_final) memakai
-# teks literal '<S8>' yang encode ke 4 char IDs [46,69,42,48] bukan single ID 8.
-#
-# Fix (SPEC-subst-sentinel-NATIVE-v1):
+# Placeholder tekstual (mis. '<S8>') TIDAK boleh ter-encode sebagai deretan
+# karakter biasa — ia harus menjadi SATU ID sentinel. Loader ini adalah satu
+# titik kebenaran substitusi tersebut. Aturan:
 # - Substitusi HANYA di ASSISTANT content (termasuk think). USER content teks apa
 #   adanya sebagai anti-spoofing — user tidak boleh bisa "menghasilkan sentinel"
 #   via teks yang mereka tulis.
-# - Sentinel tool = TRAINED (labels = sentinel_id) mengikuti pola THINK/ENDTHINK.
+# - Sentinel TOOL_CALL (S8/S9) = TRAINED (labels = sentinel_id) mengikuti pola
+#   THINK/ENDTHINK. Span TOOL_RESULT (S10..S11, termasuk isinya) = IGNORE —
+#   hasil tool adalah suara sistem, bukan emisi model.
 # - JSONL tetap human-readable — satu titik kebenaran di loader ini, bukan
 #   rewrite dataset.
 import re as _re
@@ -71,34 +70,48 @@ _TOOL_PATTERN = _re.compile(r"<S(8|9|10|11)>")
 def _encode_assistant_content(content: str, codec):
     """Encode assistant content dengan substitusi <S8..S11> → SENTINEL_8..11 single-ID.
 
-    Substitusi HANYA berlaku untuk assistant content (build_example L79-87). User content
-    (L76-78) tetap `codec.encode(text)` mentah — anti-spoofing per SPEC-subst-sentinel-NATIVE-v1.
+    Substitusi HANYA berlaku untuk assistant content. User content tetap
+    `codec.encode(text)` mentah — anti-spoofing (lihat aturan substitusi di atas).
+
+    MASK HASIL-TOOL: span TOOL_RESULT — dari <S10> (open) sampai <S11> (close),
+    TERMASUK isinya dan kedua sentinelnya — di-IGNORE. Hasil tool = suara SISTEM
+    yang disuntik pipeline (eksekutor), BUKAN emisi model. Melatih span itu =
+    mengajari model MENGARANG hasil beserta sumbernya (akar halusinasi tool).
+    Kontrak native: model dilatih EMIT panggilan (<S8>..<S9>), MENERIMA hasil
+    (masked) sebagai konteks, lalu MENYANDAR padanya untuk jawaban (trained
+    lagi setelah <S11>). Model belajar MENYALIN dari hasil, bukan menghafal isinya.
 
     Returns:
-        (ids, labels) — parallel lists. Semua labels = TRAINED (=ids untuk chars,
-        =sentinel_id untuk placeholder yang ter-substitusi). Model belajar emit
-        sentinel ID-tunggal, mengikuti pola THINK/ENDTHINK di build_example L84-86.
+        (ids, labels) — parallel. labels = ids untuk emisi model (S8/S9 panggilan,
+        teks jawaban, sentinel); = IGNORE untuk span hasil-tool <S10>..<S11>.
     """
     ids = []
     labels = []
     pos = 0
+    in_result = False  # True di antara <S10>..<S11> — suara sistem, IGNORE
     for m in _TOOL_PATTERN.finditer(content):
         # Chunk teks sebelum placeholder
         if m.start() > pos:
             chunk = codec.encode(content[pos:m.start()])
             ids.extend(chunk)
-            labels.extend(chunk)  # TRAINED regular content
-        # Substitusi placeholder → sentinel single-ID
-        sentinel_name = _TOOL_PLACEHOLDER_MAP[m.group(1)]
-        sentinel_id = codec.specials[sentinel_name]
+            labels.extend([IGNORE] * len(chunk) if in_result else chunk)
+        key = m.group(1)  # "8" | "9" | "10" | "11"
+        sentinel_id = codec.specials[_TOOL_PLACEHOLDER_MAP[key]]
         ids.append(sentinel_id)
-        labels.append(sentinel_id)  # TRAINED sentinel emit
+        if key == "10":            # TOOL_RESULT open → mulai span sistem (IGNORE)
+            in_result = True
+            labels.append(IGNORE)
+        elif key == "11":          # TOOL_RESULT close → akhir span sistem (IGNORE)
+            labels.append(IGNORE)
+            in_result = False
+        else:                      # S8/S9 TOOL_CALL → emisi model (TRAINED)
+            labels.append(sentinel_id)
         pos = m.end()
     # Trailing text
     if pos < len(content):
         chunk = codec.encode(content[pos:])
         ids.extend(chunk)
-        labels.extend(chunk)
+        labels.extend([IGNORE] * len(chunk) if in_result else chunk)
     return ids, labels
 
 
@@ -125,14 +138,14 @@ def build_example(codec, USER, ASST, THINK, ENDTHINK, turns, max_len):
     seq, labels = [codec.bos_id], [IGNORE]
     for t in turns:
         role = t["role"]
-        if role not in _VALID_ROLES:                               # D2: fail-fast utk role tak dikenal
+        if role not in _VALID_ROLES:                               # fail-fast untuk role tak dikenal
             raise ValueError(
                 f"build_example: role {role!r} tidak dikenal. "
                 f"Harus salah satu dari {_VALID_ROLES} — turn lain tak boleh diam-diam "
                 f"diperlakukan sbg assistant (sentinel handling violation)."
             )
         if role == "user":
-            # SPEC-subst-sentinel: user content TETAP raw (anti-spoofing) — <S8> jika muncul di user
+            # substitusi-sentinel: user content TETAP raw (anti-spoofing) — <S8> jika muncul di user
             # akan tetap encode ke 4 char IDs, bukan sentinel single-ID. Ini SENGAJA:
             # user tidak boleh bisa "menghasilkan sentinel" via teks yang mereka tulis.
             ids = codec.encode(t["content"])
@@ -142,12 +155,12 @@ def build_example(codec, USER, ASST, THINK, ENDTHINK, turns, max_len):
             seq.append(ASST); labels.append(IGNORE)
             think = t.get("think")
             if think and THINK is not None and ENDTHINK is not None:
-                # SPEC-subst-sentinel: think content = assistant content, apply substitusi
+                # substitusi-sentinel: think content = assistant content, apply substitusi
                 tid, tlabels = _encode_assistant_content(think, codec)
                 seq.append(THINK); labels.append(THINK)           # TRAINED: buka think
                 seq += tid; labels += tlabels                       # TRAINED: reasoning (sentinel-substituted)
                 seq.append(ENDTHINK); labels.append(ENDTHINK)     # TRAINED: tutup think
-            # SPEC-subst-sentinel-NATIVE-v1: assistant content substitusi <S8..S11> → SENTINEL_8..11
+            # substitusi-sentinel: assistant content substitusi <S8..S11> → SENTINEL_8..11
             aids, alabels = _encode_assistant_content(t["content"], codec)
             seq += aids; labels += alabels                          # TRAINED: jawaban (sentinel-substituted)
     seq.append(codec.eos_id); labels.append(codec.eos_id)           # TRAINED: EOS
@@ -166,7 +179,7 @@ def pack_multi_doc(codec, USER, ASST, THINK, ENDTHINK, docs, max_len, *, sep_pad
 
     Format: [doc1_seq] PAD*sep_pads [doc2_seq] PAD*sep_pads [doc3_seq] ... PAD-tail
     Untuk SETIAP doc: jalankan build_example logic (label assistant-only).
-    PAD pemisah di-mask attention oleh VeyraNativeModel._build_attn_mask.
+    PAD pemisah di-mask attention oleh NativeModel._build_attn_mask.
 
     Return (seq, labels) dgn shape (max_len,). None kalau gabungan > max_len.
     """
@@ -182,7 +195,7 @@ def pack_multi_doc(codec, USER, ASST, THINK, ENDTHINK, docs, max_len, *, sep_pad
             if role not in _VALID_ROLES:
                 raise ValueError(f"pack_multi_doc: role {role!r} tak dikenal")
             if role == "user":
-                # SPEC-subst-sentinel: user content raw (anti-spoofing)
+                # substitusi-sentinel: user content raw (anti-spoofing)
                 ids = codec.encode(t["content"])
                 seq.append(USER); labels.append(IGNORE)
                 seq += ids; labels += [IGNORE] * len(ids)
@@ -246,7 +259,7 @@ def main():
     ap.add_argument("--train", required=True, help="path SFT train jsonl (format turns)")
     ap.add_argument("--val", default=None, help="path SFT val jsonl (opsional)")
     ap.add_argument("--registry", default="registry/nmu_v1.json")
-    ap.add_argument("--out", default="checkpoints/nmu-veyra-native-sft")
+    ap.add_argument("--out", default="checkpoints/nmu-native-sft")
     ap.add_argument("--total-steps", type=int, default=20000)
     ap.add_argument("--time-budget", type=int, default=None)
     a = ap.parse_args()
@@ -269,20 +282,16 @@ def main():
     if base_blob["registry_hash"] != codec.registry_hash:
         raise SystemExit("[FAIL] REGISTRY_MISMATCH base-ckpt vs registry.")
     base_cfg = base_blob["config"]
-    valid_fields = {f.name for f in fields(VeyraNativeConfig)}
-    # Kunci config arsitektur/istilah asing (legacy) — DITOLAK, harus literal agar tertangkap.
-    forbidden = {"patch_size", "d_global", "d_local", "n_global_layers", "n_local_layers",
-                 "window", "max_seq", "max_seq_len", "tie_embeddings", "max_patches",
-                 "vocab_size"}
-    bad = [k for k in base_cfg if k in forbidden]
+    valid_fields = {f.name for f in fields(NativeConfig)}
+    # Kontrak config TERTUTUP: hanya field milik NativeConfig yang diterima.
+    bad = [k for k in base_cfg if k not in valid_fields]
     if bad:
-        raise SystemExit(f"[FAIL] base-ckpt mengandung field scaffold: {bad}. "
-                         f"Bukan ckpt veyra-native.")
+        raise SystemExit(f"[FAIL] base-ckpt memuat field di luar kontrak arsitektur: {bad}.")
     cfg_clean = {k: v for k, v in base_cfg.items() if k in valid_fields}
-    cfg = VeyraNativeConfig(**cfg_clean)
-    model = VeyraNativeModel(cfg).to(dev)
+    cfg = NativeConfig(**cfg_clean)
+    model = NativeModel(cfg).to(dev)
     model.load_state_dict(base_blob["model"])
-    print(f"Veyra-NATIVE {count_params(model)/1e6:.1f}M  loaded pretrain ckpt step={base_blob['step']}",
+    print(f"Model referensi {count_params(model)/1e6:.1f}M  loaded pretrain ckpt step={base_blob['step']}",
           flush=True)
 
     opt, opt_kind = get_optimizer(model, tc["lr"], tc.get("optimizer", "adam8bit"))
@@ -294,22 +303,22 @@ def main():
         blob = torch.load(ckpt, map_location=dev, weights_only=False)
         if blob["registry_hash"] != codec.registry_hash:
             raise SystemExit("[FAIL] REGISTRY_MISMATCH SFT ckpt vs registry.")
-        # D1: cek keras config konsisten (cegah shape mismatch / silent wrong weights)
+        # cek keras config konsisten (cegah shape mismatch / silent wrong weights)
         if blob["config"] != cfg.__dict__:
             diff = {k: (blob["config"].get(k), cfg.__dict__.get(k))
                     for k in set(blob["config"]) | set(cfg.__dict__)
                     if blob["config"].get(k) != cfg.__dict__.get(k)}
             raise SystemExit(f"[FAIL] CONFIG_MISMATCH SFT ckpt vs base-ckpt arsitektur: {diff}")
-        # D3: cek schema/version hash (deteksi VeyraNativeConfig stale)
+        # cek schema/version hash (deteksi NativeConfig stale)
         expected_hash = config_hash(cfg.__dict__)
         if blob.get("config_hash") and blob["config_hash"] != expected_hash:
             raise SystemExit(
                 f"[FAIL] CONFIG_HASH_MISMATCH: ckpt={blob['config_hash'][:8]} "
-                f"current={expected_hash[:8]}. Schema VeyraNativeConfig mungkin berubah; "
+                f"current={expected_hash[:8]}. Schema NativeConfig mungkin berubah; "
                 f"retrain atau migrasi ckpt manual."
             )
         model.load_state_dict(blob["model"])
-        # D4: cek opt_kind konsisten sebelum load opt.state_dict
+        # cek opt_kind konsisten sebelum load opt.state_dict
         if blob.get("opt_kind") and blob["opt_kind"] != opt_kind:
             raise SystemExit(
                 f"[FAIL] OPT_KIND_MISMATCH: ckpt={blob['opt_kind']} current={opt_kind}. "
